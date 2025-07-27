@@ -41,12 +41,8 @@ class MovieRecommender:
         movies_path = self._download_movielens_data()
         self.movies = pd.read_csv(movies_path)
         
-        # Extract year and clean title in one pass
-        title_parts = self.movies['title'].str.extract(r'^(.*?)\s*\((\d{4})\)$')
-        self.movies['clean_title'] = title_parts[0].fillna(self.movies['title'])
-        self.movies['year'] = title_parts[1]
-        
-        # Process genres for TF-IDF
+        self.movies['year'] = self.movies['title'].str.extractall(r'\((\d{4})\)').groupby(level=0).last()
+        self.movies['clean_title'] = self.movies['title'].str.replace(r'\s*\(\d{4}\)\s*$', '', regex=True).str.strip()
         self.movies['genres'] = self.movies['genres'].fillna('').str.replace('|', ' ').str.lower()
         
         self.vectorizer = TfidfVectorizer()
@@ -61,11 +57,13 @@ class MovieRecommender:
         movie_vector = self.genre_matrix.getrow(index)
         similarities = cosine_similarity(movie_vector, self.genre_matrix).flatten()
         
-        # Get top similar movies excluding the input movie
-        similar_indices = similarities.argsort()[::-1][1:]
+        all_indices = similarities.argsort()[::-1]
         
         recommendations = []
-        for idx in similar_indices:
+        for idx in all_indices:
+            if idx == index:
+                continue
+                
             if similarities[idx] >= similarity_threshold:
                 recommendations.append((self.movies.iloc[idx]['title'], similarities[idx]))
                 if len(recommendations) >= num_recommendations:
@@ -82,13 +80,15 @@ class MovieRecommender:
         movie_vector = self.genre_matrix.getrow(index)
         similarities = cosine_similarity(movie_vector, self.genre_matrix).flatten()
         
-        # Get all similar movies above threshold
-        all_indices = similarities.argsort()[::-1][1:]
-        valid_recommendations = [
-            (self.movies.iloc[idx]['title'], similarities[idx])
-            for idx in all_indices
-            if similarities[idx] >= similarity_threshold
-        ]
+        all_indices = similarities.argsort()[::-1]
+        valid_recommendations = []
+        
+        for idx in all_indices:
+            if idx == index:
+                continue
+                
+            if similarities[idx] >= similarity_threshold:
+                valid_recommendations.append((self.movies.iloc[idx]['title'], similarities[idx]))
         
         return valid_recommendations[start_index:start_index + batch_size]
     
