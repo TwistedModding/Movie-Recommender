@@ -30,7 +30,7 @@ class MovieRecommender:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(data_dir)
         
-        # Move files from subdirectory and cleanup
+        # clean up
         extracted_dir = os.path.join(data_dir, "ml-latest")
         for file in os.listdir(extracted_dir):
             os.rename(os.path.join(extracted_dir, file), os.path.join(data_dir, file))
@@ -46,40 +46,34 @@ class MovieRecommender:
         
         ratings_path = os.path.join(os.path.dirname(movies_path), "ratings.csv")
         
-        # Load ratings in chunks and filter immediately to save memory
-        print("Loading ratings data in chunks to manage memory...")
-        chunk_size = 1000000  # 1M rows at a time
+        # chunk loading and filtering for memory
+        print("Loading chunks...")
+        chunk_size = 1000000
         filtered_chunks = []
         
-        # First pass: identify popular movies from chunks
         movie_counts = {}
         total_processed = 0
         
         for chunk in pd.read_csv(ratings_path, chunksize=chunk_size):
             total_processed += len(chunk)
-            print(f"Processing chunk... Total rows processed: {total_processed:,}")
+            print(f"Processing chunk... {total_processed:,}")
             
-            # Count movie occurrences
             chunk_counts = chunk['movieId'].value_counts()
             for movie_id, count in chunk_counts.items():
                 movie_counts[movie_id] = movie_counts.get(movie_id, 0) + count
         
-        # Get top 2000 most rated movies for memory efficiency
         popular_movies = pd.Series(movie_counts).nlargest(2000).index.tolist()
         print(f"Selected top {len(popular_movies)} popular movies from {len(movie_counts)} total movies")
         
-        # Second pass: load only data for popular movies
         total_processed = 0
         for chunk in pd.read_csv(ratings_path, chunksize=chunk_size):
             total_processed += len(chunk)
             print(f"Filtering chunk... Total rows processed: {total_processed:,}")
             
-            # Filter to only popular movies
             filtered_chunk = chunk[chunk['movieId'].isin(popular_movies)]
             if len(filtered_chunk) > 0:
                 filtered_chunks.append(filtered_chunk)
         
-        # Combine filtered chunks
         if filtered_chunks:
             self.ratings = pd.concat(filtered_chunks, ignore_index=True)
             print(f"Final ratings dataset: {len(self.ratings):,} ratings for {self.ratings['movieId'].nunique()} movies")
@@ -87,7 +81,7 @@ class MovieRecommender:
             print("No ratings data found, using empty dataset")
             self.ratings = pd.DataFrame(columns=['userId', 'movieId', 'rating', 'timestamp'])
         
-        # Extract year and clean title
+        # get year and clean title
         self.movies['year'] = self.movies['title'].str.extractall(r'\((\d{4})\)').groupby(level=0).last()
         self.movies['clean_title'] = self.movies['title'].str.replace(r'\s*\(\d{4}\)\s*$', '', regex=True).str.strip()
         
@@ -106,7 +100,6 @@ class MovieRecommender:
         popular_movies = movie_counts.head(1000).index
         active_users = user_counts.head(2000).index
         
-        # Filter ratings to much smaller subset
         filtered_ratings = self.ratings[
             (self.ratings['movieId'].isin(popular_movies)) & 
             (self.ratings['userId'].isin(active_users))
@@ -130,7 +123,7 @@ class MovieRecommender:
         
         print(f"Actual matrix shape: {user_movie_matrix.shape}")
         
-        n_components = min(30, min(user_movie_matrix.shape) - 1)  # Smaller components
+        n_components = min(30, min(user_movie_matrix.shape) - 1)
         self.svd = TruncatedSVD(n_components=n_components, random_state=42)
         self.user_factors = self.svd.fit_transform(user_movie_matrix)
         self.movie_factors = self.svd.components_.T
