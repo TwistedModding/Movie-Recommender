@@ -2,8 +2,13 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import streamlit as st
+import os
 
-movies = pd.read_csv("data/movies.csv")
+# Get the directory where this script is located
+script_dir = os.path.dirname(os.path.abspath(__file__))
+data_path = os.path.join(script_dir, "data", "movies.csv")
+
+movies = pd.read_csv(data_path)
 
 movies['genres'] = movies['genres'].fillna('')
 
