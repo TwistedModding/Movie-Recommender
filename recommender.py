@@ -5,22 +5,13 @@ import streamlit as st
 import os
 import urllib.request
 import zipfile
-from typing import List, Tuple, Optional
 
 class MovieRecommender:
-    """A content-based movie recommendation system using TF-IDF and cosine similarity."""
-    
     def __init__(self):
-        self.movies: Optional[pd.DataFrame] = None
-        self.vectorizer: Optional[TfidfVectorizer] = None
-        self.genre_matrix = None
         self._load_data()
     
-    @st.cache_data
-    def _download_movielens_data(_self):
-        """Download and extract MovieLens dataset if not already present"""
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        data_dir = os.path.join(script_dir, "data")
+    def _download_movielens_data(self):
+        data_dir = os.path.join(os.path.dirname(__file__), "data")
         movies_path = os.path.join(data_dir, "movies.csv")
         
         if os.path.exists(movies_path):
@@ -31,229 +22,174 @@ class MovieRecommender:
         url = "https://files.grouplens.org/datasets/movielens/ml-latest-small.zip"
         zip_path = os.path.join(data_dir, "ml-latest-small.zip")
         
-        with st.spinner("Downloading MovieLens dataset... This may take a moment."):
-            urllib.request.urlretrieve(url, zip_path)
-            
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(data_dir)
-            
-            extracted_dir = os.path.join(data_dir, "ml-latest-small")
-            for file in os.listdir(extracted_dir):
-                src = os.path.join(extracted_dir, file)
-                dst = os.path.join(data_dir, file)
-                if os.path.isfile(src):
-                    os.rename(src, dst)
-            
-            os.rmdir(extracted_dir)
-            os.remove(zip_path)
+        urllib.request.urlretrieve(url, zip_path)
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(data_dir)
+        
+        # Move files from subdirectory and cleanup
+        extracted_dir = os.path.join(data_dir, "ml-latest-small")
+        for file in os.listdir(extracted_dir):
+            os.rename(os.path.join(extracted_dir, file), os.path.join(data_dir, file))
+        
+        os.rmdir(extracted_dir)
+        os.remove(zip_path)
         
         return movies_path
     
     def _load_data(self):
-        """Load and preprocess movie data"""
         movies_path = self._download_movielens_data()
         self.movies = pd.read_csv(movies_path)
         
-        self.movies['year'] = self.movies['title'].str.extract(r'\((\d{4})\)$')[0]
-        self.movies['clean_title'] = self.movies['title'].str.replace(r'\s*\(\d{4}\)$', '', regex=True)
+        # Extract year and clean title in one pass
+        title_parts = self.movies['title'].str.extract(r'^(.*?)\s*\((\d{4})\)$')
+        self.movies['clean_title'] = title_parts[0].fillna(self.movies['title'])
+        self.movies['year'] = title_parts[1]
         
-        self.movies['genres'] = self.movies['genres'].fillna('')
-        self.movies['genres'] = self.movies['genres'].str.replace('|', ' ').str.lower()
+        # Process genres for TF-IDF
+        self.movies['genres'] = self.movies['genres'].fillna('').str.replace('|', ' ').str.lower()
         
         self.vectorizer = TfidfVectorizer()
         self.genre_matrix = self.vectorizer.fit_transform(self.movies['genres'])
     
-    def get_recommendations(self, movie_title: str, similarity_threshold: float = 0.1, 
-                          num_recommendations: int = 5) -> List[Tuple[str, float]]:
-        """Get movie recommendations based on similarity threshold"""
-        if self.movies is None or self.genre_matrix is None:
-            return []
-            
+    def get_recommendations(self, movie_title, similarity_threshold=0.1, num_recommendations=5):
         try:
             index = self.movies[self.movies['title'] == movie_title].index[0]
-            
-            movie_vector = self.genre_matrix.getrow(index)
-            similarities = cosine_similarity(movie_vector, self.genre_matrix).flatten()
-            
-            valid_indices = similarities.argsort()[::-1][1:]
-            
-            recommendations = []
-            for idx in valid_indices:
-                if similarities[idx] >= similarity_threshold:
-                    recommendations.append((self.movies.iloc[idx]['title'], similarities[idx]))
-                    if len(recommendations) >= num_recommendations:
-                        break
-            
-            return recommendations
         except IndexError:
-            return []
+            raise ValueError(f"Movie '{movie_title}' not found")
+        
+        movie_vector = self.genre_matrix.getrow(index)
+        similarities = cosine_similarity(movie_vector, self.genre_matrix).flatten()
+        
+        # Get top similar movies excluding the input movie
+        similar_indices = similarities.argsort()[::-1][1:]
+        
+        recommendations = []
+        for idx in similar_indices:
+            if similarities[idx] >= similarity_threshold:
+                recommendations.append((self.movies.iloc[idx]['title'], similarities[idx]))
+                if len(recommendations) >= num_recommendations:
+                    break
+        
+        return recommendations
     
-    def get_extended_recommendations(self, movie_title: str, similarity_threshold: float = 0.1, 
-                                   start_index: int = 5, batch_size: int = 5) -> List[Tuple[str, float]]:
-        """Get additional recommendations starting from a specific index"""
-        if self.movies is None or self.genre_matrix is None:
-            return []
-            
+    def get_extended_recommendations(self, movie_title, similarity_threshold=0.1, start_index=5, batch_size=5):
         try:
             index = self.movies[self.movies['title'] == movie_title].index[0]
-            
-            movie_vector = self.genre_matrix.getrow(index)
-            similarities = cosine_similarity(movie_vector, self.genre_matrix).flatten()
-            
-            all_similar_indices = similarities.argsort()[::-1][1:]
-            
-            valid_recommendations = []
-            for idx in all_similar_indices:
-                if similarities[idx] >= similarity_threshold:
-                    valid_recommendations.append((self.movies.iloc[idx]['title'], similarities[idx]))
-            
-            end_index = start_index + batch_size
-            return valid_recommendations[start_index:end_index]
-        except (IndexError, ValueError):
-            return []
+        except IndexError:
+            raise ValueError(f"Movie '{movie_title}' not found")
+        
+        movie_vector = self.genre_matrix.getrow(index)
+        similarities = cosine_similarity(movie_vector, self.genre_matrix).flatten()
+        
+        # Get all similar movies above threshold
+        all_indices = similarities.argsort()[::-1][1:]
+        valid_recommendations = [
+            (self.movies.iloc[idx]['title'], similarities[idx])
+            for idx in all_indices
+            if similarities[idx] >= similarity_threshold
+        ]
+        
+        return valid_recommendations[start_index:start_index + batch_size]
     
-    def get_available_years(self) -> List[int]:
-        """Get sorted list of available years"""
-        if self.movies is None:
-            return []
-        return sorted(self.movies['year'].dropna().unique().astype(int), reverse=True)
+    def get_available_years(self):
+        return sorted(self.movies['year'].dropna().astype(int).unique(), reverse=True)
     
-    def get_available_genres(self) -> List[str]:
-        """Get sorted list of available genres"""
-        if self.movies is None:
-            return []
+    def get_available_genres(self):
         all_genres = set()
-        for genre_list in self.movies['genres'].str.split():
-            if isinstance(genre_list, list):
-                all_genres.update(genre_list)
-        return sorted([g for g in all_genres if g and g != '(no'])
+        for genres in self.movies['genres'].str.split():
+            all_genres.update(genres or [])
+        return sorted(g for g in all_genres if g and g != '(no')
     
-    def filter_movies(self, year: Optional[str] = None, genre: Optional[str] = None) -> pd.DataFrame:
-        """Filter movies by year and/or genre"""
-        if self.movies is None:
-            return pd.DataFrame()
-            
-        filtered_movies = self.movies.copy()
+    def filter_movies(self, year=None, genre=None):
+        filtered = self.movies.copy()
         
         if year and year != 'All Years':
-            filtered_movies = filtered_movies[filtered_movies['year'] == year]
+            filtered = filtered[filtered['year'] == year]
         
         if genre and genre != 'All Genres':
-            filtered_movies = filtered_movies[filtered_movies['genres'].str.contains(genre, case=False, na=False)]
+            filtered = filtered[filtered['genres'].str.contains(genre, case=False, na=False)]
         
-        return filtered_movies
+        return filtered
 
 @st.cache_resource
 def get_recommender():
     return MovieRecommender()
 
-def main():
-    recommender = get_recommender()
+recommender = get_recommender()
+
+st.title("Movie Recommender")
+
+similarity_threshold = st.slider("Similarity threshold:", 0.0, 1.0, 0.3, 0.05)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    years = recommender.get_available_years()
+    selected_year = st.selectbox("Filter by year:", ['All Years'] + [str(year) for year in years])
+
+with col2:
+    genres = recommender.get_available_genres()
+    selected_genre = st.selectbox("Filter by genre:", ['All Genres'] + genres)
+
+filtered_movies = recommender.filter_movies(selected_year, selected_genre)
+
+if filtered_movies.empty:
+    st.warning("No movies found with the selected filters.")
+    selected_movie = None
+else:
+    # Show list with years
+    movie_list = []
+    for _, row in filtered_movies.iterrows():
+        if pd.notna(row['year']):
+            movie_list.append(f"{row['clean_title']} ({int(row['year'])})")
+        else:
+            movie_list.append(row['title'])
     
-    st.title("Content-Based Movie Recommender")
-
-    st.subheader("Recommendation Settings")
-    similarity_threshold = st.slider(
-        "Minimum similarity threshold:", 
-        min_value=0.0, 
-        max_value=1.0, 
-        value=0.8, 
-        step=0.05,
-        help="Higher values = more similar movies (but fewer results). Lower values = more variety (but more results)."
-    )
-    st.write(f"*Showing movies with at least {similarity_threshold:.0%} similarity*")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        years = recommender.get_available_years()
-        selected_year = st.selectbox("Filter by year:", 
-                                     options=['All Years'] + [str(year) for year in years])
-
-    with col2:
-        genres = recommender.get_available_genres()
-        selected_genre = st.selectbox("Filter by genre:", 
-                                      options=['All Genres'] + genres)
-
-    filtered_movies = recommender.filter_movies(selected_year, selected_genre)
-
-    if len(filtered_movies) > 0:
-        movie_display_list = []
-        for _, row in filtered_movies.iterrows():
-            if pd.notna(row['year']):
-                display_title = f"{row['clean_title']} ({int(float(row['year']))})"
-            else:
-                display_title = row['title']
-            movie_display_list.append(display_title)
-        
-        movie_display_list = sorted(movie_display_list)
-        selected_movie_display = st.selectbox("Pick a movie you like:", movie_display_list)
-        
-        if selected_movie_display and '(' in selected_movie_display and selected_movie_display.endswith(')'):
-            selected_movie_title = selected_movie_display.rsplit(' (', 1)[0]
-            if recommender.movies is not None:
-                matching_movies = recommender.movies[recommender.movies['clean_title'] == selected_movie_title]
-                if len(matching_movies) > 0:
-                    selected_movie = matching_movies.iloc[0]['title']
-                else:
-                    selected_movie = selected_movie_display
-            else:
-                selected_movie = selected_movie_display
-        else:
-            selected_movie = selected_movie_display
+    selected_display = st.selectbox("Pick a movie:", sorted(movie_list))
+    
+    # Get original title
+    if selected_display and '(' in selected_display:
+        clean_title = selected_display.split(' (')[0]
+        matches = recommender.movies[recommender.movies['clean_title'] == clean_title]
+        selected_movie = matches.iloc[0]['title'] if not matches.empty else selected_display
     else:
-        st.warning("No movies found with the selected filters.")
-        selected_movie = None
+        selected_movie = selected_display
 
-    if selected_movie and st.button("Recommend Similar Movies"):
-        st.session_state.recommendations_shown = 5
-        st.session_state.current_movie = selected_movie
-        st.session_state.similarity_threshold = similarity_threshold
-        st.session_state.all_recommendations = []
-        
-        recommendations = recommender.get_recommendations(selected_movie, similarity_threshold)
-        
-        if recommendations:
-            st.session_state.all_recommendations = recommendations
+if selected_movie and st.button("Get Recommendations"):
+    st.session_state.recommendations_shown = 5
+    st.session_state.current_movie = selected_movie
+    st.session_state.similarity_threshold = similarity_threshold
+    
+    recommendations = recommender.get_recommendations(selected_movie, similarity_threshold)
+    st.session_state.all_recommendations = recommendations or []
+
+if st.session_state.get('all_recommendations'):
+    st.subheader("Recommendations:")
+    
+    for title, score in st.session_state.all_recommendations:
+        # Some display formatting
+        if '(' in title and title.endswith(')'):
+            st.write(f"• {title} ({score:.2f})")
         else:
-            st.error("Movie not found or no recommendations available with the selected similarity threshold. Try lowering the threshold.")
-
-    if hasattr(st.session_state, 'all_recommendations') and st.session_state.all_recommendations:
-        st.subheader("You might also like:")
+            st.write(f"• {title} ({score:.2f})")
+    
+    # Show more button
+    if (st.session_state.get('current_movie') and 
+        st.session_state.get('recommendations_shown', 5) < 100):
         
-        for i, (title, score) in enumerate(st.session_state.all_recommendations):
-            display_title = title
-            year_match = pd.Series([title]).str.extract(r'\((\d{4})\)$')[0].iloc[0]
-            if pd.notna(year_match):
-                clean_title = title.replace(f' ({year_match})', '')
-                display_title = f"{clean_title} ({year_match})"
+        if st.button("Show More"):
+            more_recs = recommender.get_extended_recommendations(
+                st.session_state.current_movie,
+                st.session_state.similarity_threshold,
+                start_index=st.session_state.recommendations_shown,
+                batch_size=5
+            )
             
-            st.write(f"{display_title} (Similarity: {score:.2f})")
-        
-        current_movie = getattr(st.session_state, 'current_movie', None)
-        stored_threshold = getattr(st.session_state, 'similarity_threshold', 0.1)
-        recommendations_shown = getattr(st.session_state, 'recommendations_shown', 5)
-        
-        if current_movie and recommendations_shown < 100:
-            st.write(f"*Showing {len(st.session_state.all_recommendations)} recommendations (≥{stored_threshold:.0%} similarity)*")
-            if st.button("🔍 Show More Recommendations"):
-                more_recommendations = recommender.get_extended_recommendations(
-                    current_movie, 
-                    stored_threshold,
-                    start_index=recommendations_shown, 
-                    batch_size=5
-                )
-                
-                if more_recommendations:
-                    st.session_state.all_recommendations.extend(more_recommendations)
-                    st.session_state.recommendations_shown += len(more_recommendations)
-                    st.rerun()
-                else:
-                    st.info("No more recommendations available with the selected similarity threshold.")
-                    st.session_state.recommendations_shown = 100
-        elif current_movie and recommendations_shown >= 100:
-            st.write(f"*Showing {len(st.session_state.all_recommendations)} recommendations (maximum reached)*")
-            st.info("Reached maximum number of recommendations (100). Try a different movie for more suggestions!")
-
-if __name__ == "__main__":
-    main()
+            if more_recs:
+                st.session_state.all_recommendations.extend(more_recs)
+                st.session_state.recommendations_shown += len(more_recs)
+                st.rerun()
+            else:
+                st.info("No more recommendations available.")
+                st.session_state.recommendations_shown = 100
