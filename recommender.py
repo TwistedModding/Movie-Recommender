@@ -3,31 +3,43 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import streamlit as st
 
-# Load movie data
 movies = pd.read_csv("data/movies.csv")
 
-# Fill missing genres
 movies['genres'] = movies['genres'].fillna('')
 
-# Convert genres to lowercase with spaces
 movies['genres'] = movies['genres'].str.replace('|', ' ').str.lower()
 
-# Vectorize genres
 vectorizer = TfidfVectorizer()
 genre_matrix = vectorizer.fit_transform(movies['genres'])
 
-# Compute similarity matrix
-similarity = cosine_similarity(genre_matrix)
+def get_recommendations(movie_title, num_recommendations=5):
+    try:
+        index = movies[movies['title'] == movie_title].index[0]
+        
+        movie_vector = genre_matrix.getrow(index)
+        
+        similarities = cosine_similarity(movie_vector, genre_matrix).flatten()
 
-# UI
+        similar_indices = similarities.argsort()[::-1][1:num_recommendations+1]
+
+        recommendations = []
+        for idx in similar_indices:
+            recommendations.append((movies.iloc[idx]['title'], similarities[idx]))
+        
+        return recommendations
+    except IndexError:
+        return []
+
 st.title("🎬 Content-Based Movie Recommender")
 movie_list = movies['title'].sort_values().tolist()
 selected_movie = st.selectbox("Pick a movie you like:", movie_list)
 
 if st.button("Recommend Similar Movies"):
-    index = movies[movies['title'] == selected_movie].index[0]
-    scores = list(enumerate(similarity[index]))
-    scores = sorted(scores, key=lambda x: x[1], reverse=True)[1:6]  # Skip itself
-    st.subheader("You might also like:")
-    for i, score in scores:
-        st.write(f"⭐ {movies.iloc[i]['title']} (Similarity: {score:.2f})")
+    recommendations = get_recommendations(selected_movie)
+    
+    if recommendations:
+        st.subheader("You might also like:")
+        for title, score in recommendations:
+            st.write(f"⭐ {title} (Similarity: {score:.2f})")
+    else:
+        st.error("Movie not found or no recommendations available.")
