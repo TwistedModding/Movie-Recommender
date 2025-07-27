@@ -4,7 +4,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import streamlit as st
 
 # Load movie data
-movies = pd.read_csv("ml-latest-small/movies.csv")
+movies = pd.read_csv("data/movies.csv")
 
 # Fill missing genres
 movies['genres'] = movies['genres'].fillna('')
