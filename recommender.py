@@ -19,8 +19,8 @@ class MovieRecommender:
         
         os.makedirs(data_dir, exist_ok=True)
         
-        url = "https://files.grouplens.org/datasets/movielens/ml-latest-small.zip"
-        zip_path = os.path.join(data_dir, "ml-latest-small.zip")
+        url = "https://files.grouplens.org/datasets/movielens/ml-latest.zip"
+        zip_path = os.path.join(data_dir, "ml-latest.zip")
         
         urllib.request.urlretrieve(url, zip_path)
         
@@ -28,7 +28,7 @@ class MovieRecommender:
             zip_ref.extractall(data_dir)
         
         # Move files from subdirectory and cleanup
-        extracted_dir = os.path.join(data_dir, "ml-latest-small")
+        extracted_dir = os.path.join(data_dir, "ml-latest")
         for file in os.listdir(extracted_dir):
             os.rename(os.path.join(extracted_dir, file), os.path.join(data_dir, file))
         
