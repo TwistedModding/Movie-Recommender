@@ -3,12 +3,52 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import streamlit as st
 import os
+import urllib.request
+import zipfile
 
-# Get the directory where this script is located
-script_dir = os.path.dirname(os.path.abspath(__file__))
-data_path = os.path.join(script_dir, "data", "movies.csv")
+# Function to download and extract MovieLens dataset
+@st.cache_data
+def download_movielens_data():
+    """Download and extract MovieLens dataset if not already present"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(script_dir, "data")
+    movies_path = os.path.join(data_dir, "movies.csv")
+    
+    # Check if data already exists
+    if os.path.exists(movies_path):
+        return movies_path
+    
+    # Create data directory if it doesn't exist
+    os.makedirs(data_dir, exist_ok=True)
+    
+    # Download MovieLens dataset
+    url = "https://files.grouplens.org/datasets/movielens/ml-latest-small.zip"
+    zip_path = os.path.join(data_dir, "ml-latest-small.zip")
+    
+    with st.spinner("Downloading MovieLens dataset... This may take a moment."):
+        urllib.request.urlretrieve(url, zip_path)
+        
+        # Extract the zip file
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(data_dir)
+        
+        # Move files from subdirectory to data directory
+        extracted_dir = os.path.join(data_dir, "ml-latest-small")
+        for file in os.listdir(extracted_dir):
+            src = os.path.join(extracted_dir, file)
+            dst = os.path.join(data_dir, file)
+            if os.path.isfile(src):
+                os.rename(src, dst)
+        
+        # Clean up
+        os.rmdir(extracted_dir)
+        os.remove(zip_path)
+    
+    return movies_path
 
-movies = pd.read_csv(data_path)
+# Download data and load movies
+movies_path = download_movielens_data()
+movies = pd.read_csv(movies_path)
 
 movies['genres'] = movies['genres'].fillna('')
 
